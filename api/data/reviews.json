@@ -1,0 +1,46 @@
+[
+  {
+    "id": "rev-1",
+    "productId": "luna-draped-top",
+    "author": "Camille V.",
+    "rating": 5,
+    "date": "March 14, 2026",
+    "title": "Pure understated elegance",
+    "comment": "The sandwashed silk has the most extraordinary tactile hand-feel. It catches light gently without looking shiny. The cowl drape falls naturally and stays in place all evening. Worth every rupee.",
+    "verifiedPurchase": true,
+    "fitFeedback": "True to Size"
+  },
+  {
+    "id": "rev-2",
+    "productId": "luna-draped-top",
+    "author": "Elena R.",
+    "rating": 5,
+    "date": "February 28, 2026",
+    "title": "The Bordeaux shade is intoxicating",
+    "comment": "The craftsmanship of the French seams is impeccable. Fits comfortably over shoulders without gaping. I have worn it under the Atelier coat as well as with the Caelum trousers.",
+    "verifiedPurchase": true,
+    "fitFeedback": "True to Size"
+  },
+  {
+    "id": "rev-3",
+    "productId": "caelum-pleated-trouser",
+    "author": "Maya S.",
+    "rating": 5,
+    "date": "March 02, 2026",
+    "title": "Flawless drape and structure",
+    "comment": "Finding high-waisted trousers with true architectural pleats that do not puff out is nearly impossible. The wool tropical fabric breathes wonderfully even in warmer climate.",
+    "verifiedPurchase": true,
+    "fitFeedback": "True to Size"
+  },
+  {
+    "id": "rev-4",
+    "productId": "atelier-wool-trench",
+    "author": "Devon K.",
+    "rating": 5,
+    "date": "January 19, 2026",
+    "title": "An heirloom piece",
+    "comment": "The weight of the double-faced wool and cashmere is supreme. You feel enveloped in quiet luxury. Everyone stops to ask where it is from. Arrived in an exquisite dust bag.",
+    "verifiedPurchase": true,
+    "fitFeedback": "True to Size"
+  }
+]

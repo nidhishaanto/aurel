@@ -1,0 +1,674 @@
+import { DatabaseSync } from 'node:sqlite';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const dbPath = path.join(__dirname, 'aurel.db');
+const db = new DatabaseSync(dbPath);
+
+// Enable WAL mode for safe local concurrency. Node 22+ includes SQLite natively.
+db.exec('PRAGMA journal_mode = WAL');
+
+// Compatibility helper matching the transaction API used by the original app.
+db.transaction = (callback) => {
+  return (...args) => {
+    db.exec('BEGIN');
+    try {
+      const result = callback(...args);
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  };
+};
+
+// Initialize database schema
+export function initDatabase() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS products (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      subtitle TEXT,
+      category TEXT NOT NULL,
+      collection TEXT NOT NULL,
+      price REAL NOT NULL,
+      original_price REAL,
+      description TEXT NOT NULL,
+      editorial_quote TEXT,
+      details TEXT NOT NULL, -- JSON array
+      materials TEXT,
+      care TEXT,
+      sustainability TEXT,
+      images TEXT NOT NULL, -- JSON array
+      colors TEXT NOT NULL, -- JSON array
+      sizes TEXT NOT NULL, -- JSON array
+      stock TEXT NOT NULL, -- JSON object
+      rating REAL DEFAULT 5.0,
+      review_count INTEGER DEFAULT 0,
+      is_new INTEGER DEFAULT 0,
+      is_bestseller INTEGER DEFAULT 0,
+      is_featured INTEGER DEFAULT 0,
+      is_limited INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS reviews (
+      id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      author TEXT NOT NULL,
+      rating INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      title TEXT,
+      comment TEXT NOT NULL,
+      verified_purchase INTEGER DEFAULT 1,
+      fit_feedback TEXT DEFAULT 'True to Size',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      order_id TEXT PRIMARY KEY,
+      date TEXT NOT NULL,
+      items TEXT NOT NULL, -- JSON array of CartItem
+      subtotal REAL NOT NULL,
+      discount REAL DEFAULT 0,
+      shipping REAL DEFAULT 0,
+      tax REAL DEFAULT 0,
+      total REAL NOT NULL,
+      currency TEXT DEFAULT 'INR',
+      shipping_details TEXT NOT NULL, -- JSON object
+      payment_method TEXT NOT NULL,
+      status TEXT DEFAULT 'confirmed',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS subscribers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Check if products exist; if not, seed with full catalog
+  const count = db.prepare('SELECT COUNT(*) as count FROM products').get().count;
+  if (count === 0) {
+    seedProducts();
+  }
+}
+
+function seedProducts() {
+  console.log('Seeding initial luxury product catalog into SQLite database...');
+
+  const initialProducts = [
+    {
+      id: 'luna-draped-top',
+      name: 'Luna Draped Silk Top',
+      subtitle: 'Sandwashed Mulberry Silk with Fluid Cowl Neckline',
+      category: 'tops',
+      collection: 'Everyday Edit',
+      price: 2490,
+      originalPrice: 3200,
+      description: 'An ode to effortless form. The Luna top is sculpted from 22-momme sandwashed mulberry silk that drapes gently over the collarbone. Designed with subtle shoulder folds and an asymmetric hem, it transitions seamlessly from studio mornings to intimate evening dinners.',
+      editorialQuote: '"An exercise in restraint and tactile drape."',
+      details: [
+        '100% Grade 6A Sandwashed Mulberry Silk',
+        'Fluid asymmetric cowl neckline with reinforced internal facing',
+        'French seam construction throughout',
+        'Concealed invisible zip closure at back neckline',
+        'Subtle high-low hem designed for effortless half-tucking',
+        'Designed in our studio and crafted in Como, Italy'
+      ],
+      materials: '100% GOTS Certified Mulberry Silk (22 Momme)',
+      care: 'Dry clean recommended or delicate hand wash in cold water with pH-neutral silk detergent.',
+      sustainability: 'Sourced from OEKO-TEX Standard 100 certified silkworm farms with zero pesticide intervention.',
+      images: [
+        'https://images.unsplash.com/photo-1534126511673-b6899657816a?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1551803091-e20673f15770?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Warm Ivory', hex: '#F7F4EE', imageIndex: 0 },
+        { name: 'Bordeaux Noir', hex: '#4A151D', imageIndex: 1 },
+        { name: 'Muted Slate', hex: '#63686D', imageIndex: 2 }
+      ],
+      sizes: ['XS', 'S', 'M', 'L', 'XL'],
+      stock: { XS: 4, S: 2, M: 7, L: 5, XL: 3 },
+      rating: 4.9,
+      reviewCount: 42,
+      isNew: 1,
+      isBestseller: 1,
+      isFeatured: 1,
+      isLimited: 0
+    },
+    {
+      id: 'caelum-pleated-trouser',
+      name: 'Caelum Pleated Wool Trouser',
+      subtitle: 'High-Waisted Italian Tropical Virgin Wool',
+      category: 'bottoms',
+      collection: 'Everyday Edit',
+      price: 3890,
+      originalPrice: 4600,
+      description: 'Precision tailored with an architectural silhouette. Cut from breathable, tropical four-season virgin wool with sharp double front pleats, an elongated rise, and a fluid wide leg that pools softly over loafers or boots.',
+      editorialQuote: '"Crisp architectural lines balanced by natural movement."',
+      details: [
+        '100% Super 120s Italian Virgin Wool',
+        'Deep double knife pleats on front panels',
+        'Extended waistband tab with hidden hook-and-bar closure',
+        'Interior curtain waistband for seamless tailored fit',
+        'Angled slash pockets and clean welt back pockets'
+      ],
+      materials: '100% Super 120s Italian Virgin Wool, Cupro pocket lining',
+      care: 'Specialist dry clean only. Steam between wears to refresh natural wool fibers.',
+      sustainability: 'Woven at a solar-powered mill in Biella, Italy adhering to ZDHC chemical discharge guidelines.',
+      images: [
+        'https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1584273143981-41c073dfe8f8?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Oatmeal Sand', hex: '#DED6C7', imageIndex: 0 },
+        { name: 'Charcoal Melange', hex: '#323438', imageIndex: 1 },
+        { name: 'Dark Olive', hex: '#3B4036', imageIndex: 2 }
+      ],
+      sizes: ['XS', 'S', 'M', 'L', 'XL'],
+      stock: { XS: 3, S: 5, M: 4, L: 2, XL: 1 },
+      rating: 4.8,
+      reviewCount: 38,
+      isNew: 0,
+      isBestseller: 1,
+      isFeatured: 1,
+      isLimited: 0
+    },
+    {
+      id: 'atelier-wool-trench',
+      name: 'Atelier Double-Breasted Coat',
+      subtitle: 'Double-Faced Cashmere & Wool Blend',
+      category: 'outerwear',
+      collection: 'Permanent Collection',
+      price: 8490,
+      originalPrice: 9900,
+      description: 'The pinnacle of Aurel outerwear. Hand-stitched split-seam construction in a heavyweight double-faced cashmere and virgin wool blend. Generously proportioned with dropped shoulders, storm flaps, and a removable self-fabric tie belt.',
+      editorialQuote: '"An enveloping heirloom coat constructed to endure decades."',
+      details: [
+        '80% Virgin Wool, 20% Mongolian Cashmere',
+        'Unlined double-face finish with hand-rolled seams',
+        'Horn buttons crafted from sustainably sourced byproduct',
+        'Detachable waist belt with thread loops'
+      ],
+      materials: '80% Italian Virgin Wool, 20% Grade-A Mongolian Cashmere',
+      care: 'Professional dry clean only. Store on a contoured cedar hanger.',
+      sustainability: 'Recycled cashmere certified by the Global Recycled Standard (GRS). Fully biodegradable fibers.',
+      images: [
+        'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1485968579580-b6d095142e6e?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Camel Warmth', hex: '#BA946E', imageIndex: 0 },
+        { name: 'Deep Noir', hex: '#1C1B1A', imageIndex: 1 },
+        { name: 'Raw Ecru', hex: '#EBE5D8', imageIndex: 2 }
+      ],
+      sizes: ['XS', 'S', 'M', 'L'],
+      stock: { XS: 2, S: 1, M: 3, L: 4 },
+      rating: 5.0,
+      reviewCount: 29,
+      isNew: 0,
+      isBestseller: 0,
+      isFeatured: 1,
+      isLimited: 1
+    },
+    {
+      id: 'elysian-silk-slip',
+      name: 'Elysian Bias-Cut Silk Slip',
+      subtitle: 'Weighty 30mm Sandwashed Silk Charmeuse',
+      category: 'dresses',
+      collection: 'Everyday Edit',
+      price: 4290,
+      originalPrice: 4900,
+      description: 'Cut strictly on the true bias to skim the natural contours of the body with gentle fluidity. Features delicate adjustable spaghetti straps, a soft scooped neckline, and an ankle-grazing midi hem with subtle godet flare.',
+      editorialQuote: '"The purest expression of minimal sensual tailoring."',
+      details: [
+        '100% Heavyweight Silk Charmeuse (30mm)',
+        'True 45-degree diagonal bias cut for natural stretch and drape',
+        'Delicate self-fabric roulette straps with gold-plated sliders',
+        'Double-faced interior bust panel for modesty and hold'
+      ],
+      materials: '100% Pure Mulberry Silk',
+      care: 'Hand wash cold inside out with delicate detergent. Do not wring.',
+      sustainability: 'Dyed using bluesign® approved closed-loop mineral pigments with zero water pollution.',
+      images: [
+        'https://images.unsplash.com/photo-1496747611176-843222e1e57c?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1502716119720-b23a93e5fe1b?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Champagne Ivory', hex: '#EFE7DA', imageIndex: 0 },
+        { name: 'Bordeaux Vintage', hex: '#581921', imageIndex: 1 },
+        { name: 'Midnight Jet', hex: '#171719', imageIndex: 2 }
+      ],
+      sizes: ['XS', 'S', 'M', 'L', 'XL'],
+      stock: { XS: 3, S: 4, M: 2, L: 6, XL: 2 },
+      rating: 4.9,
+      reviewCount: 31,
+      isNew: 1,
+      isBestseller: 1,
+      isFeatured: 0,
+      isLimited: 0
+    },
+    {
+      id: 'lune-crescent-bag',
+      name: 'Lune Sculpted Leather Bag',
+      subtitle: 'Smooth Calfskin with Brushed Solid Brass Hardware',
+      category: 'bags',
+      collection: 'Permanent Collection',
+      price: 5290,
+      originalPrice: 5900,
+      description: 'An architectural crescent silhouette handcrafted by master artisans in Florence. Sculpted from buttery vegetable-tanned Italian calfskin that develops an exquisite natural patina over time.',
+      editorialQuote: '"A timeless curve designed to age gracefully with everyday use."',
+      details: [
+        '100% Full-grain Vegetable-Tanned Italian Calf Leather',
+        'Lined in soft natural lambskin suede',
+        'Bespoke hand-brushed solid brass hardware with matte lacquer finish'
+      ],
+      materials: 'Vegetable-tanned Tuscan Calf Leather, Lambskin suede interior, Solid brass',
+      care: 'Condition once every six months with organic beeswax balm.',
+      sustainability: 'Leather byproduct from regenerative European agriculture. Tanned using chestnut bark extracts.',
+      images: [
+        'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1590874103328-eac38a683ce7?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1548036328-c9fa89d128fa?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Cognac Saddle', hex: '#874B2A', imageIndex: 0 },
+        { name: 'Deep Espresso', hex: '#2A1C16', imageIndex: 1 },
+        { name: 'Pebbled Ivory', hex: '#EDE8DF', imageIndex: 2 }
+      ],
+      sizes: ['One Size'],
+      stock: { 'One Size': 6 },
+      rating: 4.9,
+      reviewCount: 54,
+      isNew: 0,
+      isBestseller: 1,
+      isFeatured: 1,
+      isLimited: 0
+    },
+    {
+      id: 'sora-relaxed-poplin-shirt',
+      name: 'Sora Crisp Poplin Shirt',
+      subtitle: 'Extra-Long Staple Organic Giza Cotton',
+      category: 'tops',
+      collection: 'Everyday Edit',
+      price: 2190,
+      originalPrice: 2600,
+      description: 'The definitive white shirt, reimagined with an understated oversized boyfriend drape. Woven from 120-two-ply Egyptian Giza cotton for a crisp, paper-like hand feel that maintains its structure throughout the day.',
+      editorialQuote: '"Architectural simplicity in purest cotton."',
+      details: [
+        '100% Organic Long-Staple Egyptian Giza 87 Cotton',
+        'Spread collar with removable collar stays',
+        'Mother of pearl buttons sourced from sustainable fisheries'
+      ],
+      materials: '100% Organic Giza 87 Cotton',
+      care: 'Machine wash delicate at 30°C. Line dry in shade. Hot iron with steam while slightly damp.',
+      sustainability: 'GOTS Certified organic cotton grown with 91% less water than conventional cotton.',
+      images: [
+        'https://images.unsplash.com/photo-1598554747436-c9293d6a588f?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Optic Crisp White', hex: '#F9F9F8', imageIndex: 0 },
+        { name: 'Chambray Sky', hex: '#B8C9D9', imageIndex: 1 },
+        { name: 'French Stripe', hex: '#D2DCE6', imageIndex: 2 }
+      ],
+      sizes: ['XS', 'S', 'M', 'L', 'XL'],
+      stock: { XS: 8, S: 12, M: 15, L: 9, XL: 4 },
+      rating: 4.8,
+      reviewCount: 67,
+      isNew: 0,
+      isBestseller: 1,
+      isFeatured: 0,
+      isLimited: 0
+    },
+    {
+      id: 'aura-fine-merino-knit',
+      name: 'Aura Fine Merino Rib Sweater',
+      subtitle: '100% Extra-Fine Australian Merino Wool (19.5 Micron)',
+      category: 'tops',
+      collection: 'Everyday Edit',
+      price: 3190,
+      description: 'Spun from featherweight Australian Merino wool, the Aura sweater features alternating micro-ribbing that gently hugs the silhouette without restricting movement.',
+      editorialQuote: '"Second-skin warmth with zero bulk."',
+      details: [
+        '100% Extra-Fine Australian Merino Wool',
+        'Engineered seamless fully-fashioned knit technique',
+        'Delicate mock neck collar with subtle roll finish'
+      ],
+      materials: '100% Merino Wool (ZQ Certified Ethical Wool)',
+      care: 'Hand wash gently in lukewarm water with wool wash. Dry flat on a towel.',
+      sustainability: 'ZQ Certified ensuring animal welfare, non-mulesed sheep, and regenerative grassland stewardship.',
+      images: [
+        'https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1434389677669-e08b4cac3105?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1485968579580-b6d095142e6e?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Dark Bordeaux', hex: '#581D23', imageIndex: 0 },
+        { name: 'Warm Putty', hex: '#DDD6CC', imageIndex: 1 },
+        { name: 'Charcoal Night', hex: '#262627', imageIndex: 2 }
+      ],
+      sizes: ['XS', 'S', 'M', 'L'],
+      stock: { XS: 5, S: 8, M: 6, L: 3 },
+      rating: 4.7,
+      reviewCount: 22,
+      isNew: 1,
+      isBestseller: 0,
+      isFeatured: 0,
+      isLimited: 0
+    },
+    {
+      id: 'sylvan-wide-pant',
+      name: 'Sylvan Raw Silk Wide Trouser',
+      subtitle: 'Textured Slub Noil Silk with Drawstring Waist',
+      category: 'bottoms',
+      collection: 'Permanent Collection',
+      price: 3490,
+      description: 'A relaxed silhouette infused with the tactile beauty of raw noil silk. Boasts an elasticated drawstring waistband for tailored comfort and generous deep side pockets.',
+      editorialQuote: '"Casual elegance grounded in organic texture."',
+      details: [
+        '100% Raw Silk Noil with subtle nubby slub texture',
+        'Encased elastic waistband with flat woven cotton drawcord',
+        'Deep functional side in-seam pockets'
+      ],
+      materials: '100% Raw Noil Silk',
+      care: 'Hand wash cold or gentle machine wash in laundry bag.',
+      sustainability: 'Made using silk fiber remnants that would otherwise be discarded in traditional silk production.',
+      images: [
+        'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1584273143981-41c073dfe8f8?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Unbleached Cream', hex: '#EDE6DA', imageIndex: 0 },
+        { name: 'Washed Olive', hex: '#4B5244', imageIndex: 1 },
+        { name: 'Ink Black', hex: '#1E1E1E', imageIndex: 2 }
+      ],
+      sizes: ['XS', 'S', 'M', 'L', 'XL'],
+      stock: { XS: 6, S: 4, M: 9, L: 5, XL: 2 },
+      rating: 4.8,
+      reviewCount: 19,
+      isNew: 0,
+      isBestseller: 0,
+      isFeatured: 0,
+      isLimited: 0
+    },
+    {
+      id: 'alba-square-loafer',
+      name: 'Alba Square-Toe Loafer',
+      subtitle: 'Handcrafted Box Calfskin with Beveled Wooden Stacked Heel',
+      category: 'footwear',
+      collection: 'Permanent Collection',
+      price: 4990,
+      originalPrice: 5600,
+      description: 'Sculptural and grounded. The Alba loafer presents an elongated chiselled square toe, subtle welt stitching, and a low stacked wooden heel.',
+      editorialQuote: '"Subtle geometry meeting uncompromising artisanal comfort."',
+      details: [
+        '100% Full-grain French Box Calf Leather upper',
+        'Breathable vegetable-tanned leather lining and insole',
+        'Blake stitched construction allowing multiple future resolings'
+      ],
+      materials: 'French Box Calf Leather, Leather lining, Stacked beechwood',
+      care: 'Buff with neutral shoe wax cream and a soft horsehair brush.',
+      sustainability: 'Handcrafted in an ethical family-owned workshop in Porto, Portugal with 100% renewable energy.',
+      images: [
+        'https://images.unsplash.com/photo-1543163521-1bf539c55dd2?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Polished Black', hex: '#1C1C1D', imageIndex: 0 },
+        { name: 'Burnished Tan', hex: '#8C5832', imageIndex: 1 }
+      ],
+      sizes: ['36 EU', '37 EU', '38 EU', '39 EU', '40 EU', '41 EU'],
+      stock: { '36 EU': 2, '37 EU': 4, '38 EU': 5, '39 EU': 3, '40 EU': 2, '41 EU': 1 },
+      rating: 4.9,
+      reviewCount: 35,
+      isNew: 0,
+      isBestseller: 0,
+      isFeatured: 1,
+      isLimited: 0
+    },
+    {
+      id: 'palma-tortoiseshell-sunglasses',
+      name: 'Palma Sculpted Sunglasses',
+      subtitle: 'Hand-Polished Bio-Acetate with Brown Tint Zeiss Lenses',
+      category: 'accessories',
+      collection: 'Everyday Edit',
+      price: 1890,
+      description: 'Defined by an architectural thick-rimmed bevel and softened rectangular proportions. Crafted from sustainable Mazzucchelli plant-derived bio-acetate.',
+      editorialQuote: '"Bold contours framing the gaze with quiet gravitas."',
+      details: [
+        'Mazzucchelli M49 Bio-Acetate (biodegradable, petroleum-free)',
+        'Carl Zeiss Vision CR-39 scratch-resistant lenses',
+        'Custom 7-barrel OBE German engineered hinges'
+      ],
+      materials: 'Bio-Acetate, Zeiss optics, Stainless steel core',
+      care: 'Rinse under cool water and wipe with included microfiber cloth.',
+      sustainability: 'Bio-acetate manufactured from renewable cotton seeds and wood pulp fibers.',
+      images: [
+        'https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1572635196237-14b3f281503f?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1508296695146-257a814070b4?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Amber Tortoise', hex: '#634027', imageIndex: 0 },
+        { name: 'Onyx Noir', hex: '#171718', imageIndex: 1 }
+      ],
+      sizes: ['One Size'],
+      stock: { 'One Size': 14 },
+      rating: 4.8,
+      reviewCount: 48,
+      isNew: 0,
+      isBestseller: 0,
+      isFeatured: 0,
+      isLimited: 0
+    },
+    {
+      id: 'aethel-brass-cuff',
+      name: 'Aethel Hammered Brass Cuff',
+      subtitle: 'Solid Recycled Marine Brass with Hand-Carved Chisel Marks',
+      category: 'accessories',
+      collection: 'Permanent Collection',
+      price: 1490,
+      description: 'An organic sculpture for the wrist. Forged from recycled solid brass with hand-planished facets that catch and refract the light with warm luminosity.',
+      editorialQuote: '"Tactile weight and ancient metalcraft for modern wear."',
+      details: [
+        '100% Recycled Solid Architectural Brass',
+        'Unlacquered finish that patinas with your personal skin chemistry',
+        'Hand-hammered faceted texture, each piece subtly unique'
+      ],
+      materials: '100% Solid Recycled Brass',
+      care: 'Embrace the natural golden patina, or polish back to high luster with lemon juice and baking soda.',
+      sustainability: 'Cast from 100% reclaimed scrap brass by generational metalsmiths.',
+      images: [
+        'https://images.unsplash.com/photo-1611591475878-a461e71561db?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Brushed Golden Brass', hex: '#D4AF37', imageIndex: 0 }
+      ],
+      sizes: ['One Size'],
+      stock: { 'One Size': 11 },
+      rating: 5.0,
+      reviewCount: 16,
+      isNew: 0,
+      isBestseller: 0,
+      isFeatured: 0,
+      isLimited: 0
+    },
+    {
+      id: 'forma-architectural-tote',
+      name: 'Forma Structured Leather Tote',
+      subtitle: 'Rigid Saddle Leather with Magnetic Bridge Tab',
+      category: 'bags',
+      collection: 'Everyday Edit',
+      price: 6490,
+      originalPrice: 7200,
+      description: 'A study in architectural restraint. Accommodates a 15-inch laptop alongside everyday journals and essentials. Engineered with folded origami side gussets.',
+      editorialQuote: '"Everyday utility elevated to sculptured monument."',
+      details: [
+        'Full-grain Italian Bridle Leather (2.2mm thickness)',
+        'Hand-painted and beveled raw edge finishes',
+        'Padded internal laptop sleeve fitting up to 15" devices'
+      ],
+      materials: 'Italian Bridle Leather, Unlined interior suede',
+      care: 'Wipe with dry microfiber cloth. Treat with saddle cream twice yearly.',
+      sustainability: 'Chrome-free vegetable tanning process producing non-hazardous bio-waste.',
+      images: [
+        'https://images.unsplash.com/photo-1590874103328-eac38a683ce7?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1548036328-c9fa89d128fa?auto=format&fit=crop&w=1200&q=80'
+      ],
+      colors: [
+        { name: 'Raw Umber', hex: '#4B3621', imageIndex: 0 },
+        { name: 'Black Box', hex: '#191817', imageIndex: 1 }
+      ],
+      sizes: ['One Size'],
+      stock: { 'One Size': 5 },
+      rating: 4.9,
+      reviewCount: 27,
+      isNew: 0,
+      isBestseller: 0,
+      isFeatured: 1,
+      isLimited: 0
+    }
+  ];
+
+  const insertProduct = db.prepare(`
+    INSERT INTO products (
+      id, name, subtitle, category, collection, price, original_price,
+      description, editorial_quote, details, materials, care, sustainability,
+      images, colors, sizes, stock, rating, review_count, is_new, is_bestseller, is_featured, is_limited
+    ) VALUES (
+      @id, @name, @subtitle, @category, @collection, @price, @original_price,
+      @description, @editorial_quote, @details, @materials, @care, @sustainability,
+      @images, @colors, @sizes, @stock, @rating, @review_count, @is_new, @is_bestseller, @is_featured, @is_limited
+    )
+  `);
+
+  const insertManyProducts = db.transaction((products) => {
+    for (const p of products) {
+      insertProduct.run({
+        id: p.id,
+        name: p.name,
+        subtitle: p.subtitle,
+        category: p.category,
+        collection: p.collection,
+        price: p.price,
+        original_price: p.originalPrice || null,
+        description: p.description,
+        editorial_quote: p.editorialQuote || null,
+        details: JSON.stringify(p.details),
+        materials: p.materials,
+        care: p.care,
+        sustainability: p.sustainability,
+        images: JSON.stringify(p.images),
+        colors: JSON.stringify(p.colors),
+        sizes: JSON.stringify(p.sizes),
+        stock: JSON.stringify(p.stock),
+        rating: p.rating,
+        review_count: p.reviewCount,
+        is_new: p.isNew ? 1 : 0,
+        is_bestseller: p.isBestseller ? 1 : 0,
+        is_featured: p.isFeatured ? 1 : 0,
+        is_limited: p.isLimited ? 1 : 0
+      });
+    }
+  });
+
+  insertManyProducts(initialProducts);
+
+  // Seed initial reviews
+  const insertReview = db.prepare(`
+    INSERT INTO reviews (id, product_id, author, rating, date, title, comment, verified_purchase, fit_feedback)
+    VALUES (@id, @product_id, @author, @rating, @date, @title, @comment, @verified_purchase, @fit_feedback)
+  `);
+
+  const initialReviews = [
+    {
+      id: 'rev-1',
+      product_id: 'luna-draped-top',
+      author: 'Camille V.',
+      rating: 5,
+      date: 'March 14, 2026',
+      title: 'Pure understated elegance',
+      comment: 'The sandwashed silk has the most extraordinary tactile hand-feel. It catches light gently without looking shiny. The cowl drape falls naturally and stays in place all evening. Worth every rupee.',
+      verified_purchase: 1,
+      fit_feedback: 'True to Size'
+    },
+    {
+      id: 'rev-2',
+      product_id: 'luna-draped-top',
+      author: 'Elena R.',
+      rating: 5,
+      date: 'February 28, 2026',
+      title: 'The Bordeaux shade is intoxicating',
+      comment: 'The craftsmanship of the French seams is impeccable. Fits comfortably over shoulders without gaping. I have worn it under the Atelier coat as well as with the Caelum trousers.',
+      verified_purchase: 1,
+      fit_feedback: 'True to Size'
+    },
+    {
+      id: 'rev-3',
+      product_id: 'caelum-pleated-trouser',
+      author: 'Maya S.',
+      rating: 5,
+      date: 'March 02, 2026',
+      title: 'Flawless drape and structure',
+      comment: 'Finding high-waisted trousers with true architectural pleats that do not puff out is nearly impossible. The wool tropical fabric breathes wonderfully even in warmer climate.',
+      verified_purchase: 1,
+      fit_feedback: 'True to Size'
+    },
+    {
+      id: 'rev-4',
+      product_id: 'atelier-wool-trench',
+      author: 'Devon K.',
+      rating: 5,
+      date: 'January 19, 2026',
+      title: 'An heirloom piece',
+      comment: 'The weight of the double-faced wool and cashmere is supreme. You feel enveloped in quiet luxury. Everyone stops to ask where it is from. Arrived in an exquisite dust bag.',
+      verified_purchase: 1,
+      fit_feedback: 'True to Size'
+    }
+  ];
+
+  const insertManyReviews = db.transaction((reviews) => {
+    for (const r of reviews) {
+      insertReview.run(r);
+    }
+  });
+
+  insertManyReviews(initialReviews);
+  console.log('Database successfully initialized and seeded with 12 pieces and reviews.');
+}
+
+export default db;
